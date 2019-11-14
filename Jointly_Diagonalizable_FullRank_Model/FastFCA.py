@@ -312,7 +312,7 @@ if __name__ == "__main__":
     wav = wav.T
     M = len(wav)
     for m in range(M):
-        tmp = librosa.core.stft(wav[m], n_fft=args.n_fft, hop_length=int(args.n_fft/4))
+        tmp = librosa.core.stft(np.asfortranarray(wav[m]), n_fft=args.n_fft, hop_length=int(args.n_fft/4))
         if m == 0:
             spec = np.zeros([tmp.shape[0], tmp.shape[1], M], dtype=np.complex)
         spec[:, :, m] = tmp
