@@ -3,7 +3,7 @@
 
 import numpy as np
 import sys, os
-from progressbar import progressbar
+from tqdm import tqdm
 import soundfile as sf
 import pickle as pic
 
@@ -161,7 +161,7 @@ class FastFCA():
         self.make_fileName_suffix()
 
         log_likelihood_array = []
-        for it in progressbar(range(self.NUM_iteration)):
+        for it in tqdm(range(self.NUM_iteration)):
             self.update()
 
             if save_parameter and ((it+1) % interval_save_parameter == 0) and ((it+1) != self.NUM_iteration):
