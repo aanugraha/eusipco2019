@@ -10,6 +10,7 @@ import pickle as pic
 from configure_FastModel import *
 from FastFCA import FastFCA
 
+from scipy.signal import stft, istft, get_window
 try:
     from chainer import cuda
     FLAG_GPU_Available = True
@@ -132,7 +133,7 @@ class FastMNMF_DP(FastFCA):
         self.update_Z_speech()
         self.update_WH_noise()
         self.update_CovarianceDiagElement()
-        self.udpate_Diagonalizer()
+        self.update_Diagonalizer()
         self.normalize()
 
 
@@ -263,7 +264,6 @@ class Z_link(chainer.link.Link):
 
 if __name__ == "__main__":
     import soundfile as sf
-    import librosa
     import sys, os
     from chainer import serializers
     import argparse
@@ -298,17 +298,16 @@ if __name__ == "__main__":
     if xp != np:
         speech_VAE.to_gpu()
 
-    wav, fs = sf.read(args.input_fileName)
-    wav = wav.T
-    M = len(wav)
-    for m in range(M):
-        tmp = librosa.core.stft(np.asfortranarray(wav[m]), n_fft=1024, hop_length=256)
-        if m == 0:
-            spec = np.zeros([tmp.shape[0], tmp.shape[1], M], dtype=np.complex)
-        spec[:, :, m] = tmp
+    n_fft = 1024
+    sig, fs = sf.read(args.input_fileName, always_2d=True)
+    spec_FNM = np.transpose(
+        stft(sig.T, window='hann', nperseg=n_fft, noverlap=3*n_fft//4)[-1],
+        (1, 2, 0))
+    stft_scale = get_window('hann', n_fft).sum()
+    spec_FNM *= stft_scale
 
     separater = FastMNMF_DP(NUM_noise=args.NUM_noise, speech_VAE=speech_VAE, NUM_Z_iteration=args.NUM_Z_iteration, NUM_basis_noise=args.NUM_basis_noise, xp=xp, MODE_initialize_covarianceMatrix=args.MODE_initialize_covarianceMatrix, MODE_update_Z=args.MODE_update_Z)
-    separater.load_spectrogram(spec)
+    separater.load_spectrogram(spec_FNM)
     separater.file_id = args.file_id
     separater.name_DNN = name_DNN
     separater.solve(NUM_iteration=args.NUM_iteration, save_likelihood=False, save_parameter=False, save_path="./", interval_save_parameter=25)

@@ -4,11 +4,13 @@
 import numpy as np
 import sys, os
 from progressbar import progressbar
-import librosa
 import soundfile as sf
 import pickle as pic
 
 from configure_FastModel import *
+
+from scipy.signal import stft, istft, get_window
+
 
 sys.path.append("../CupyLibrary")
 try:
@@ -43,7 +45,6 @@ class FastFCA():
         self.xp = xp
         self.calculateInverseMatrix = self.return_InverseMatrixCalculationMethod()
         self.method_name = "FastFCA"
-
 
     def convert_to_NumpyArray(self, data):
         if self.xp == np:
@@ -187,11 +188,11 @@ class FastFCA():
     def update(self):
         self.update_lambda()
         self.update_CovarianceDiagElement()
-        self.udpate_Diagonalizer()
+        self.update_Diagonalizer()
         self.normalize()
 
 
-    def udpate_Diagonalizer(self):
+    def update_Diagonalizer(self):
         V_FMMM = (self.XX_FTMM[:, :, None] / self.Y_FTM[:, :, :, None, None]).mean(axis=1)
         for m in range(self.NUM_mic):
             tmp_FM = self.calculateInverseMatrix(self.diagonalizer_FMM @ V_FMMM[:, m])[:, :, m]
@@ -253,20 +254,16 @@ class FastFCA():
 
 
     def save_separated_signal(self, save_fileName="sample.wav"):
-        self.separated_spec = self.convert_to_NumpyArray(self.separated_spec)
-        hop_length = int((self.NUM_freq - 1) / 2)
-        if self.separated_spec.ndim == 2:
-            separated_signal = librosa.core.istft(self.separated_spec, hop_length=hop_length)
-            separated_signal /= np.abs(separated_signal).max() * 1.2
-            sf.write(save_fileName, separated_signal, 16000)
-        elif self.separated_spec.ndim == 3:
-            for n in range(self.NUM_source):
-                tmp = librosa.core.istft(self.separated_spec[n, :, :], hop_length=hop_length)
-                if n == 0:
-                    separated_signal = np.zeros([self.NUM_source, len(tmp)])
-                separated_signal[n] = tmp
-            separated_signal /= np.abs(separated_signal).max() * 1.2
-            sf.write(save_fileName, separated_signal.T, 16000)
+        sep_src_stft_MFN = self.convert_to_NumpyArray(self.separated_spec)
+        # infer STFT length and scale (= get_window('hann', args.n_fft).sum())
+        stft_winlen = (sep_src_stft_MFN.shape[1] - 1) * 2
+        stft_scale = sep_src_stft_MFN.shape[1] - 1
+        sep_src_stft_MFN /= stft_scale
+        _, sep_src_sig_MT = istft(
+            sep_src_stft_MFN, window='hann', nperseg=stft_winlen,
+            noverlap=3*stft_winlen//4, nfft=stft_winlen)
+        sep_src_sig_TM = sep_src_sig_MT.T #[:mix_sig_TM.shape[0]]
+        sf.write(save_fileName, sep_src_sig_TM, 16000)
 
 
     def save_parameter(self, fileName):
@@ -308,16 +305,14 @@ if __name__ == "__main__":
         print("Use GPU " + str(args.gpu))
         cuda.get_device_from_id(args.gpu).use()
 
-    wav, fs = sf.read(args.input_fileName)
-    wav = wav.T
-    M = len(wav)
-    for m in range(M):
-        tmp = librosa.core.stft(np.asfortranarray(wav[m]), n_fft=args.n_fft, hop_length=int(args.n_fft/4))
-        if m == 0:
-            spec = np.zeros([tmp.shape[0], tmp.shape[1], M], dtype=np.complex)
-        spec[:, :, m] = tmp
+    sig, fs = sf.read(args.input_fileName, always_2d=True)
+    spec_FNM = np.transpose(
+        stft(sig.T, window='hann', nperseg=args.n_fft, noverlap=3*args.n_fft//4)[-1],
+        (1, 2, 0))
+    stft_scale = get_window('hann', args.n_fft).sum()
+    spec_FNM *= stft_scale
 
     separater = FastFCA(NUM_source=args.NUM_source, xp=xp, MODE_initialize_covarianceMatrix=args.MODE_initialize_covarianceMatrix)
-    separater.load_spectrogram(spec)
+    separater.load_spectrogram(spec_FNM)
     separater.file_id = args.file_id
     separater.solve(NUM_iteration=args.NUM_iteration, save_likelihood=False, save_parameter=False, save_wav=False, save_path="./", interval_save_parameter=25)

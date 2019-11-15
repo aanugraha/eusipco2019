@@ -4,7 +4,6 @@
 import numpy as np
 import chainer
 import sys, os
-import librosa
 import soundfile as sf
 import time
 import pickle as pic
@@ -12,6 +11,7 @@ import pickle as pic
 from configure_FastModel import *
 from FastFCA import FastFCA
 
+from scipy.signal import stft, istft, get_window
 try:
     from chainer import cuda
     FLAG_GPU_Available = True
@@ -79,7 +79,7 @@ class FastMNMF(FastFCA):
     def update(self):
         self.update_WH()
         self.update_CovarianceDiagElement()
-        self.udpate_Diagonalizer()
+        self.update_Diagonalizer()
         self.normalize()
 
 
@@ -154,16 +154,14 @@ if __name__ == "__main__":
         print("Use GPU " + str(args.gpu))
         cuda.get_device_from_id(args.gpu).use()
 
-    wav, fs = sf.read(args.input_fileName)
-    wav = wav.T
-    M = len(wav)
-    for m in range(M):
-        tmp = librosa.core.stft(np.asfortranarray(wav[m]), n_fft=args.n_fft, hop_length=int(args.n_fft/4))
-        if m == 0:
-            spec = np.zeros([tmp.shape[0], tmp.shape[1], M], dtype=np.complex)
-        spec[:, :, m] = tmp
+    sig, fs = sf.read(args.input_fileName, always_2d=True)
+    spec_FNM = np.transpose(
+        stft(sig.T, window='hann', nperseg=args.n_fft, noverlap=3*args.n_fft//4)[-1],
+        (1, 2, 0))
+    stft_scale = get_window('hann', args.n_fft).sum()
+    spec_FNM *= stft_scale
 
     separater = FastMNMF(NUM_source=args.NUM_source, NUM_basis=args.NUM_basis, xp=xp, MODE_initialize_covarianceMatrix=args.MODE_initialize_covarianceMatrix)
-    separater.load_spectrogram(spec)
+    separater.load_spectrogram(spec_FNM)
     separater.file_id = args.file_id
     separater.solve(NUM_iteration=args.NUM_iteration, save_likelihood=False, save_parameter=False, save_wav=False, save_path="./", interval_save_parameter=25)
