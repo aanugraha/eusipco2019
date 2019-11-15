@@ -1,15 +1,17 @@
 #! /usr/bin/env python3
 # coding: utf-8
 
-import numpy as np
-import sys, os
-from tqdm import tqdm
-import soundfile as sf
+import sys
 import pickle as pic
 
-from configure_FastModel import *
+import argparse
+import numpy as np
+import soundfile as sf
 
 from scipy.signal import stft, istft, get_window
+from tqdm import tqdm
+
+from configure_FastModel import *
 
 
 sys.path.append("../CupyLibrary")
@@ -284,9 +286,6 @@ class FastFCA():
 
 
 if __name__ == "__main__":
-    import sys, os
-    import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument(    'input_fileName', type= str, help='filename of the multichannel observed signals')
     parser.add_argument(         '--file_id', type= str, default="None", help='file id')
@@ -299,7 +298,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.gpu < 0:
-        import numpy as xp
+        xp = np
     else:
         import cupy as xp
         print("Use GPU " + str(args.gpu))
