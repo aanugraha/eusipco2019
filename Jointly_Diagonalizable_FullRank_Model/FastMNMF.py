@@ -33,7 +33,7 @@ class FastMNMF(FastFCA):
             NUM_basis: int
                 the number of bases of each source
             MODE_initialize_covarianceMatrix: str
-                how to initialize covariance matrix {unit, obs, cGMM, cGMM2(only speech)}
+                how to initialize covariance matrix {unit, obs}
         """
         super(FastMNMF, self).__init__(NUM_source=NUM_source, xp=xp, MODE_initialize_covarianceMatrix=MODE_initialize_covarianceMatrix)
         self.NUM_basis = NUM_basis
@@ -49,7 +49,7 @@ class FastMNMF(FastFCA):
             NUM_iteration: int
             NUM_basis: int
             MODE_initialize_covarianceMatrix: str
-                how to initialize covariance matrix {unit, obs, cGMM}
+                how to initialize covariance matrix {unit, obs}
         """
         super(FastMNMF, self).set_parameter(NUM_source=NUM_source, MODE_initialize_covarianceMatrix=MODE_initialize_covarianceMatrix)
         if NUM_basis != None:
@@ -84,16 +84,16 @@ class FastMNMF(FastFCA):
 
 
     def update_WH(self):
-        a = (self.H_NKT[:, None] * (self.covarianceDiag_NFM[:, :, None] * (self.Qx_power_FTM / (self.Y_FTM ** 2))[None]).sum(axis=3)[:, :, None]).sum(axis=3)  # N F K T M
-        b = (self.H_NKT[:, None] * (self.covarianceDiag_NFM[:, :, None] / self.Y_FTM[None]).sum(axis=3)[:, :, None]).sum(axis=3)
-        self.W_NFK = self.W_NFK * self.xp.sqrt(a / b)
-        self.lambda_NFT = self.W_NFK @ self.H_NKT
-        self.Y_FTM = (self.lambda_NFT[..., None] * self.covarianceDiag_NFM[:, :, None]).sum(axis=0)
+        tmp1_NFT = (self.covarianceDiag_NFM[:, :, None] * (self.Qx_power_FTM / (self.Y_FTM ** 2))[None]).sum(axis=3)
+        tmp2_NFT = (self.covarianceDiag_NFM[:, :, None] / self.Y_FTM[None]).sum(axis=3)
+        a_W = (self.H_NKT[:, None] * tmp1_NFT[:, :, None]).sum(axis=3)  # N F K T M
+        b_W = (self.H_NKT[:, None] * tmp2_NFT[:, :, None]).sum(axis=3)
+        a_H = (self.W_NFK[..., None] * tmp1_NFT[:, :, None] ).sum(axis=1) # N F K T M
+        b_H = (self.W_NFK[..., None] * tmp2_NFT[:, :, None]).sum(axis=1) # N F K T M
+        self.W_NFK = self.W_NFK * self.xp.sqrt(a_W / b_W)
+        self.H_NKT = self.H_NKT * self.xp.sqrt(a_H / b_H)
 
-        a = (self.W_NFK[..., None] * (self.covarianceDiag_NFM[:, :, None] * (self.Qx_power_FTM / (self.Y_FTM ** 2))[None]).sum(axis=3)[:, :, None] ).sum(axis=1) # N F K T M
-        b = (self.W_NFK[..., None] * (self.covarianceDiag_NFM[:, :, None] / self.Y_FTM[None]).sum(axis=3)[:, :, None]).sum(axis=1) # N F K T M
-        self.H_NKT = self.H_NKT * self.xp.sqrt(a / b)
-        self.lambda_NFT = self.W_NFK @ self.H_NKT
+        self.lambda_NFT = self.W_NFK @ self.H_NKT + EPS
         self.Y_FTM = (self.lambda_NFT[..., None] * self.covarianceDiag_NFM[:, :, None]).sum(axis=0)
 
 
@@ -109,7 +109,7 @@ class FastMNMF(FastFCA):
         nu_NK = self.W_NFK.sum(axis=1)
         self.W_NFK = self.W_NFK / nu_NK[:, None]
         self.H_NKT = self.H_NKT * nu_NK[:, :, None]
-        self.lambda_NFT = self.W_NFK @ self.H_NKT
+        self.lambda_NFT = self.W_NFK @ self.H_NKT + EPS
 
         self.reset_variable()
 
@@ -144,7 +144,7 @@ if __name__ == "__main__":
     parser.add_argument(      '--NUM_source', type= int, default=    2, help='number of noise')
     parser.add_argument(   '--NUM_iteration', type= int, default=  100, help='number of iteration')
     parser.add_argument(       '--NUM_basis', type= int, default=    8, help='number of basis')
-    parser.add_argument( '--MODE_initialize_covarianceMatrix', type=  str, default="obs", help='cGMM, cGMM2, unit, obs')
+    parser.add_argument( '--MODE_initialize_covarianceMatrix', type=  str, default="obs", help='unit, obs')
     args = parser.parse_args()
 
     if args.gpu < 0:

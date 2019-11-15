@@ -20,32 +20,27 @@ except:
 
 class FastMNMF_DP(FastFCA):
 
-    def __init__(self, speech_VAE=None, NUM_noise=1, NUM_basis_noise=2, xp=np, MODE_initialize_covarianceMatrix="unit", MODE_update_Z="sampling", NUM_Z_iteration=30, DIM_latent=16, normalize_encoder_input=True):
+    def __init__(self, speech_VAE=None, NUM_noise=1, NUM_Z_iteration=30, DIM_latent=16, NUM_basis_noise=2, xp=np, MODE_initialize_covarianceMatrix="unit", MODE_update_Z="sampling", normalize_encoder_input=True):
         """ initialize FastMNMF_DP
 
         Parameters:
         -----------
-            speech_VAE: VAE
-                trained speech VAE network
             NUM_noise: int
                 the number of noise sources
+            speech_VAE: VAE
+                trained speech VAE network (necessary if you use VAE as speech model)
+            DIM_latent: int
+                the dimension of latent variable Z
             NUM_basis_noise: int
                 the number of bases of each noise source
             MODE_initialize_covarianceMatrix: str
-                how to initialize covariance matrix {unit, obs, cGMM, cGMM2(only speech)}
+                how to initialize covariance matrix {unit, obs}
             MODE_update_Z: str
                 how to update latent variable Z {sampling, backprop}
-            NUM_Z_iteration: int
-                the number of iteration for updating Z per global iteration
-            DIM_latent: int
-                the dimension of latent variable Z
-            normalize_encoder_input: boolean
-                normalize observation to initialize latent variable by feeding the observation into a encoder
         """
         super(FastMNMF_DP, self).__init__(NUM_source=NUM_noise+1, xp=xp, MODE_initialize_covarianceMatrix=MODE_initialize_covarianceMatrix)
-        self.speech_VAE = speech_VAE
-        self.xp = self.speech_VAE.xp
         self.NUM_source, self.NUM_speech, self.NUM_noise = NUM_noise+1, 1, NUM_noise
+        self.speech_VAE = speech_VAE
         self.NUM_Z_iteration = NUM_Z_iteration
         self.NUM_basis_noise = NUM_basis_noise
         self.DIM_latent = DIM_latent
@@ -68,7 +63,7 @@ class FastMNMF_DP(FastFCA):
             NUM_basis_noise: int
                 the number of basis of noise sources
             MODE_initialize_covarianceMatrix: str
-                how to initialize covariance matrix {unit, obs, cGMM}
+                how to initialize covariance matrix {unit, obs}
             MODE_update_Z: str
                 how to update latent variable Z {sampling, backprop}
         """
@@ -155,22 +150,22 @@ class FastMNMF_DP(FastFCA):
         nu_NnK = self.W_noise_NnFK.sum(axis=1)
         self.W_noise_NnFK = self.W_noise_NnFK / nu_NnK[:, None]
         self.H_noise_NnKT = self.H_noise_NnKT * nu_NnK[:, :, None]
-        self.lambda_NFT[1:] = self.W_noise_NnFK @ self.H_noise_NnKT
+        self.lambda_NFT[1:] = self.W_noise_NnFK @ self.H_noise_NnKT + EPS
 
         self.reset_variable()
 
 
     def update_WH_noise(self):
-        a_W = (self.H_noise_NnKT[:, None] * (self.covarianceDiag_NFM[1, :, None] * (self.Qx_power_FTM / (self.Y_FTM ** 2))[None]).sum(axis=3)[:, :, None]).sum(axis=3)  # N F K T M
-        b_W = (self.H_noise_NnKT[:, None] * (self.covarianceDiag_NFM[1, :, None] / self.Y_FTM[None]).sum(axis=3)[:, :, None]).sum(axis=3)
+        tmp1_NnFT = (self.covarianceDiag_NFM[1, :, None] * (self.Qx_power_FTM / (self.Y_FTM ** 2))[None]).sum(axis=3)
+        tmp2_NnFT = (self.covarianceDiag_NFM[1, :, None] / self.Y_FTM[None]).sum(axis=3)
+        a_W = (self.H_noise_NnKT[:, None] * tmp1_NnFT[:, :, None]).sum(axis=3)  # N F K T M
+        b_W = (self.H_noise_NnKT[:, None] * tmp2_NnFT[:, :, None]).sum(axis=3)
+        a_H = (self.W_noise_NnFK[..., None] * tmp1_NnFT[:, :, None] ).sum(axis=1) # N F K T M
+        b_H = (self.W_noise_NnFK[..., None] * tmp2_NnFT[:, :, None]).sum(axis=1) # N F K T M
         self.W_noise_NnFK = self.W_noise_NnFK * self.xp.sqrt(a_W / b_W)
-        self.lambda_NFT[1:] = self.W_noise_NnFK @ self.H_noise_NnKT
-        self.Y_FTM = (self.lambda_NFT[..., None] * self.covarianceDiag_NFM[:, :, None]).sum(axis=0)
-
-        a_H = (self.W_noise_NnFK[..., None] * (self.covarianceDiag_NFM[1, :, None] * (self.Qx_power_FTM / (self.Y_FTM ** 2))[None]).sum(axis=3)[:, :, None] ).sum(axis=1) # N F K T M
-        b_H = (self.W_noise_NnFK[..., None] * (self.covarianceDiag_NFM[1, :, None] / self.Y_FTM[None]).sum(axis=3)[:, :, None]).sum(axis=1) # N F K T M
         self.H_noise_NnKT = self.H_noise_NnKT * self.xp.sqrt(a_H / b_H)
-        self.lambda_NFT[1:] = self.W_noise_NnFK @ self.H_noise_NnKT
+
+        self.lambda_NFT[1:] = self.W_noise_NnFK @ self.H_noise_NnKT + EPS
         self.Y_FTM = (self.lambda_NFT[..., None] * self.covarianceDiag_NFM[:, :, None]).sum(axis=0)
 
 
@@ -252,14 +247,12 @@ class FastMNMF_DP(FastFCA):
         self.lambda_NFT, self.covarianceDiag_NFM, self.diagonalizer_FMM, self.u_F, self.v_T, self.Z_speech_DT, self.W_noise_NnFK, self.H_noise_NnKT = param_list
 
 
-
 class Z_link(chainer.link.Link):
     def __init__(self, z):
         super(Z_link, self).__init__()
 
         with self.init_scope():
             self.z = chainer.Parameter(z)
-
 
 
 if __name__ == "__main__":
