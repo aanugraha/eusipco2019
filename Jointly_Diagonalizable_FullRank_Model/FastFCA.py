@@ -16,13 +16,6 @@ from configure_FastModel import *
 
 sys.path.append("../CupyLibrary")
 try:
-    from chainer import cuda
-    FLAG_GPU_Available = True
-except:
-    print("---Warning--- You cannot use GPU acceleration because chainer or cupy is not installed")
-    FLAG_GPU_Available = False
-
-try:
     from cupy_matrix_inverse import inv_gpu_batch
     FLAG_CupyInverse_Enabled = True
 except:
@@ -53,7 +46,7 @@ class FastFCA():
         if self.xp == np:
             return data
         else:
-            return cuda.to_cpu(data)
+            return self.xp.asnumpy(data)
 
 
     def return_InverseMatrixCalculationMethod(self):
@@ -62,7 +55,8 @@ class FastFCA():
         elif FLAG_CupyInverse_Enabled:
             return inv_gpu_batch
         else:
-            return lambda x: cuda.to_gpu(np.linalg.inv(self.convert_to_NumpyArray(x)))
+            return lambda x: self.xp.asarray(np.linalg.inv(
+                self.convert_to_NumpyArray(x)))
 
 
     def set_parameter(self, NUM_source=None, MODE_initialize_covarianceMatrix=None):
@@ -90,24 +84,25 @@ class FastFCA():
                 power spectrogram of observed signals
         """
         self.NUM_freq, self.NUM_time, self.NUM_mic = X_FTM.shape
-        self.X_FTM = self.xp.asarray(X_FTM, dtype=self.xp.complex)
+        self.X_FTM = self.xp.asarray(X_FTM, dtype=C_FP_TYPE)
         self.XX_FTMM = self.X_FTM[:, :, :, None] @ self.X_FTM[:, :, None, :].conj()
 
 
     def initialize_PSD(self):
-        self.lambda_NFT = self.xp.random.random([self.NUM_source, self.NUM_freq, self.NUM_time]).astype(self.xp.float)
+        self.lambda_NFT = self.xp.random.random(
+            [self.NUM_source, self.NUM_freq, self.NUM_time]).astype(F_FP_TYPE)
         self.lambda_NFT[0] = self.xp.abs(self.X_FTM.mean(axis=2)) ** 2
 
 
     def initialize_covarianceMatrix(self):
         if "unit" in self.MODE_initialize_covarianceMatrix:
-            self.diagonalizer_FMM = self.xp.tile(self.xp.eye(self.NUM_mic), [self.NUM_freq, 1, 1]).astype(self.xp.complex)
-            self.covarianceDiag_NFM = self.xp.ones([self.NUM_source, self.NUM_freq, self.NUM_mic], dtype=self.xp.float) / self.NUM_mic
+            self.diagonalizer_FMM = self.xp.tile(self.xp.eye(self.NUM_mic), [self.NUM_freq, 1, 1]).astype(C_FP_TYPE)
+            self.covarianceDiag_NFM = self.xp.ones([self.NUM_source, self.NUM_freq, self.NUM_mic], dtype=F_FP_TYPE) / self.NUM_mic
         elif "obs" in self.MODE_initialize_covarianceMatrix:
             mixture_covarianceMatrix_FMM = self.XX_FTMM.sum(axis=1) / (self.xp.trace(self.XX_FTMM, axis1=2, axis2=3).sum(axis=1))[:, None, None]
             eig_val, eig_vec = np.linalg.eigh(self.convert_to_NumpyArray(mixture_covarianceMatrix_FMM))
             self.diagonalizer_FMM = self.xp.asarray(eig_vec).transpose(0, 2, 1).conj()
-            self.covarianceDiag_NFM = self.xp.ones([self.NUM_source, self.NUM_freq, self.NUM_mic], dtype=self.xp.float) / self.NUM_mic
+            self.covarianceDiag_NFM = self.xp.ones([self.NUM_source, self.NUM_freq, self.NUM_mic], dtype=F_FP_TYPE) / self.NUM_mic
             self.covarianceDiag_NFM[0] = self.xp.asarray(eig_val)
         else:
             print("Please specify how to initialize covariance matrix {unit, obs}")
@@ -189,10 +184,16 @@ class FastFCA():
 
 
     def update_Diagonalizer(self):
+        # Eq. (18): V_fm = 1/T * sum_t X_ft / \tilde{y}_ftm
         V_FMMM = (self.XX_FTMM[:, :, None] / self.Y_FTM[:, :, :, None, None]).mean(axis=1)
         for m in range(self.NUM_mic):
+            # Eq. (19): q_fm <- (Q_f V_fm)^{-1} e_m
             tmp_FM = self.calculateInverseMatrix(self.diagonalizer_FMM @ V_FMMM[:, m])[:, :, m]
-            self.diagonalizer_FMM[:, m] = (tmp_FM / self.xp.sqrt(((tmp_FM.conj()[:, :, None] * V_FMMM[:, m]).sum(axis=1) * tmp_FM).sum(axis=1))[:, None]).conj()
+            # Eq. (20): q_fm <- q_fm / sqrt(q_fm^H V_fm q_fm)
+            tmp_FM /= self.xp.sqrt(self.xp.sum(
+                tmp_FM.conj()[:, :, None] * V_FMMM[:, m] * tmp_FM[:, None, :],
+                axis=(-2, -1)))[:, None]
+            self.diagonalizer_FMM[:, m] = tmp_FM.conj()
 
 
     def update_CovarianceDiagElement(self):
@@ -211,13 +212,16 @@ class FastFCA():
 
 
     def normalize(self):
-        phi_F = self.xp.sum(self.diagonalizer_FMM * self.diagonalizer_FMM.conj(), axis=(1, 2)).real / self.NUM_mic
-        self.diagonalizer_FMM = self.diagonalizer_FMM / self.xp.sqrt(phi_F)[:, None, None]
-        self.covarianceDiag_NFM = self.covarianceDiag_NFM / phi_F[None, :, None]
+        phi_F = self.xp.sum(
+            self.diagonalizer_FMM * self.diagonalizer_FMM.conj(),
+            axis=(1, 2)).real / self.NUM_mic
+        self.diagonalizer_FMM /= self.xp.sqrt(phi_F)[:, None, None]
+        self.covarianceDiag_NFM /= phi_F[None, :, None]
 
-        mu_NF = (self.covarianceDiag_NFM).sum(axis=2).real
-        self.covarianceDiag_NFM = self.covarianceDiag_NFM / mu_NF[:, :, None]
-        self.lambda_NFT = self.lambda_NFT * mu_NF[:, :, None] + EPS
+        mu_NF = self.xp.sum(self.covarianceDiag_NFM, axis=2).real
+        self.covarianceDiag_NFM /= mu_NF[:, :, None]
+        self.lambda_NFT *= mu_NF[:, :, None]
+        self.lambda_NFT += EPS
 
         self.reset_variable()
 
@@ -227,7 +231,7 @@ class FastFCA():
 
 
     def calculate_covarianceMatrix(self):
-        covarianceMatrix_NFMM = self.xp.zeros([self.NUM_source, self.NUM_freq, self.NUM_mic, self.NUM_mic], dtype=self.xp.complex)
+        covarianceMatrix_NFMM = self.xp.zeros([self.NUM_source, self.NUM_freq, self.NUM_mic, self.NUM_mic], dtype=C_FP_TYPE)
         diagonalizer_inv_FMM = self.calculateInverseMatrix(self.diagonalizer_FMM)
         for n in range(self.NUM_source):
             for f in range(self.NUM_freq):
@@ -236,7 +240,8 @@ class FastFCA():
 
 
     def separate_FastWienerFilter(self, source_index=None, mic_index=MIC_INDEX):
-        Qx_FTM = (self.diagonalizer_FMM[:, None] * self.X_FTM[:, :, None]).sum(axis=3)
+        Qx_FTM = xp.sum(
+            self.diagonalizer_FMM[:, None] * self.X_FTM[:, :, None], axis=3)
         if source_index != None:
             diagonalizer_inv_FMM = self.calculateInverseMatrix(self.diagonalizer_FMM)
             self.separated_spec = self.convert_to_NumpyArray((diagonalizer_inv_FMM[:, None] @ (Qx_FTM * ((self.lambda_NFT[source_index, :, :, None] * self.covarianceDiag_NFM[source_index, :, None]) / (self.lambda_NFT[..., None]* self.covarianceDiag_NFM[:, :, None]).sum(axis=0)))[..., None])[:, :, mic_index, 0])
@@ -263,18 +268,19 @@ class FastFCA():
 
 
     def save_parameter(self, fileName):
-        param_list = [self.lambda_NFT, self.covarianceDiag_NFM, self.diagonalizer_FMM]
+        param_list = [
+            self.lambda_NFT, self.covarianceDiag_NFM, self.diagonalizer_FMM]
         if self.xp != np:
-            param_list = [self.convert_to_NumpyArray(param) for param in param_list]
+            param_list = [
+                self.convert_to_NumpyArray(param) for param in param_list]
         pic.dump(param_list, open(fileName, "wb"))
 
 
     def load_parameter(self, fileName):
         param_list = pic.load(open(fileName, "rb"))
-        if self.xp != np:
-            param_list = [cuda.to_gpu(param) for param in param_list]
-        self.lambda_NFT, self.covarianceDiag_NFM, self.diagonalizer_FMM = param_list
-
+        param_list = [self.xp.asarray(param) for param in param_list]
+        self.lambda_NFT, self.covarianceDiag_NFM, self.diagonalizer_FMM =\
+            param_list
         self.NUM_source, self.NUM_freq, self.NUM_time = self.lambda_NFT.shape
         self.NUM_mic = self.covarianceDiag_NFM.shape[-1]
 
@@ -305,6 +311,8 @@ if __name__ == "__main__":
     parser.add_argument(
         '--MODE_initialize_covarianceMatrix', help='unit, obs',
         type=str, default="obs")
+    parser.add_argument(
+        '--single_fp', action='store_true', dest="single_fp", default=False)
     args = parser.parse_args()
 
     if args.gpu < 0:
@@ -312,16 +320,29 @@ if __name__ == "__main__":
     else:
         import cupy as xp
         print("Use GPU " + str(args.gpu))
-        cuda.get_device_from_id(args.gpu).use()
+        xp.cuda.Device(args.gpu).use()
+
+    if args.single_fp:
+        C_FP_TYPE = xp.complex64
+        F_FP_TYPE = xp.float32
+    else:
+        C_FP_TYPE = xp.complex128
+        F_FP_TYPE = xp.float64
 
     sig, fs = sf.read(args.input_fileName, always_2d=True)
     spec_FNM = np.transpose(
-        stft(sig.T, window='hann', nperseg=args.n_fft, noverlap=3*args.n_fft//4)[-1],
+        stft(sig.T, window='hann',
+             nperseg=args.n_fft, noverlap=3*args.n_fft//4)[-1],
         (1, 2, 0))
     stft_scale = get_window('hann', args.n_fft).sum()
     spec_FNM *= stft_scale
 
-    separater = FastFCA(NUM_source=args.NUM_source, xp=xp, MODE_initialize_covarianceMatrix=args.MODE_initialize_covarianceMatrix)
+    separater = FastFCA(
+        NUM_source=args.NUM_source, xp=xp,
+        MODE_initialize_covarianceMatrix=args.MODE_initialize_covarianceMatrix)
     separater.load_spectrogram(spec_FNM)
     separater.file_id = args.file_id
-    separater.solve(NUM_iteration=args.NUM_iteration, save_likelihood=False, save_parameter=False, save_wav=False, save_path="./", interval_save_parameter=25)
+    separater.solve(
+        NUM_iteration=args.NUM_iteration,
+        save_likelihood=False, save_parameter=False, save_wav=False,
+        save_path="./", interval_save_parameter=25)
