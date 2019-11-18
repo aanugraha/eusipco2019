@@ -192,7 +192,7 @@ class FastFCA():
         V_FMMM = (self.XX_FTMM[:, :, None] / self.Y_FTM[:, :, :, None, None]).mean(axis=1)
         for m in range(self.NUM_mic):
             tmp_FM = self.calculateInverseMatrix(self.diagonalizer_FMM @ V_FMMM[:, m])[:, :, m]
-            self.diagonalizer_FMM[:, m] = (tmp_FM / self.xp.sqrt(( (tmp_FM.conj()[:, :, None] * V_FMMM[:, m]).sum(axis=1) * tmp_FM).sum(axis=1) )[:, None]).conj()
+            self.diagonalizer_FMM[:, m] = (tmp_FM / self.xp.sqrt(((tmp_FM.conj()[:, :, None] * V_FMMM[:, m]).sum(axis=1) * tmp_FM).sum(axis=1))[:, None]).conj()
 
 
     def update_CovarianceDiagElement(self):
@@ -223,7 +223,7 @@ class FastFCA():
 
 
     def calculate_log_likelihood(self):
-        return (-(self.Qx_power_FTM / self.Y_FTM).sum() + self.NUM_time * np.log(np.linalg.det(self.convert_to_NumpyArray(self.diagonalizer_FMM @ self.diagonalizer_FMM.conj().transpose(0, 2, 1) ) ) ).sum() - self.xp.log(self.Y_FTM).sum()).real - self.NUM_mic * self.NUM_freq * self.NUM_time * np.log(np.pi)
+        return (-(self.Qx_power_FTM / self.Y_FTM).sum() + self.NUM_time * np.log(np.linalg.det(self.convert_to_NumpyArray(self.diagonalizer_FMM @ self.diagonalizer_FMM.conj().transpose(0, 2, 1)))).sum() - self.xp.log(self.Y_FTM).sum()).real - self.NUM_mic * self.NUM_freq * self.NUM_time * np.log(np.pi)
 
 
     def calculate_covarianceMatrix(self):
@@ -239,11 +239,11 @@ class FastFCA():
         Qx_FTM = (self.diagonalizer_FMM[:, None] * self.X_FTM[:, :, None]).sum(axis=3)
         if source_index != None:
             diagonalizer_inv_FMM = self.calculateInverseMatrix(self.diagonalizer_FMM)
-            self.separated_spec = self.convert_to_NumpyArray((diagonalizer_inv_FMM[:, None] @ (Qx_FTM * ( (self.lambda_NFT[source_index, :, :, None] * self.covarianceDiag_NFM[source_index, :, None]) / (self.lambda_NFT[..., None]* self.covarianceDiag_NFM[:, :, None]).sum(axis=0) ) )[..., None])[:, :, mic_index, 0])
+            self.separated_spec = self.convert_to_NumpyArray((diagonalizer_inv_FMM[:, None] @ (Qx_FTM * ((self.lambda_NFT[source_index, :, :, None] * self.covarianceDiag_NFM[source_index, :, None]) / (self.lambda_NFT[..., None]* self.covarianceDiag_NFM[:, :, None]).sum(axis=0)))[..., None])[:, :, mic_index, 0])
         else:
             for n in range(self.NUM_source):
                 diagonalizer_inv_FMM = self.calculateInverseMatrix(self.diagonalizer_FMM)
-                tmp = self.convert_to_NumpyArray((diagonalizer_inv_FMM[:, None] @ (Qx_FTM * ( (self.lambda_NFT[n, :, :, None] * self.covarianceDiag_NFM[n, :, None]) / (self.lambda_NFT[..., None]* self.covarianceDiag_NFM[:, :, None]).sum(axis=0) ) )[..., None])[:, :, mic_index, 0])
+                tmp = self.convert_to_NumpyArray((diagonalizer_inv_FMM[:, None] @ (Qx_FTM * ((self.lambda_NFT[n, :, :, None] * self.covarianceDiag_NFM[n, :, None]) / (self.lambda_NFT[..., None]* self.covarianceDiag_NFM[:, :, None]).sum(axis=0)))[..., None])[:, :, mic_index, 0])
                 if n == 0:
                     self.separated_spec = np.zeros([self.NUM_source, tmp.shape[0], tmp.shape[1]], dtype=np.complex)
                 self.separated_spec[n] = tmp
@@ -281,14 +281,30 @@ class FastFCA():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument(    'input_fileName', type= str, help='filename of the multichannel observed signals')
-    parser.add_argument(         '--file_id', type= str, default="None", help='file id')
-    parser.add_argument(             '--gpu', type=  int, default=    0, help='GPU ID')
-    parser.add_argument(           '--n_fft', type=  int, default= 1024, help='number of frequencies')
-    parser.add_argument(      '--NUM_source', type=  int, default=    2, help='number of noise')
-    parser.add_argument(   '--NUM_iteration', type=  int, default=  100, help='number of iteration')
-    parser.add_argument(       '--NUM_basis', type=  int, default=    8, help='number of basis')
-    parser.add_argument( '--MODE_initialize_covarianceMatrix', type=  str, default="obs", help='unit, obs')
+    parser.add_argument(
+        'input_fileName', help='filename of the multichannel observed signals',
+        type=str)
+    parser.add_argument(
+        '--file_id', help='file id',
+        type=str, default="None")
+    parser.add_argument(
+        '--gpu', help='GPU ID',
+        type=int, default=0)
+    parser.add_argument(
+        '--n_fft', help='number of frequencies',
+        type=int, default=1024)
+    parser.add_argument(
+        '--NUM_source', help='number of noise',
+        type=int, default=2)
+    parser.add_argument(
+        '--NUM_iteration', help='number of iteration',
+        type=int, default=100)
+    parser.add_argument(
+        '--NUM_basis', help='number of basis',
+        type=int, default=8)
+    parser.add_argument(
+        '--MODE_initialize_covarianceMatrix', help='unit, obs',
+        type=str, default="obs")
     args = parser.parse_args()
 
     if args.gpu < 0:
