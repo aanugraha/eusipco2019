@@ -41,6 +41,21 @@ class FastFCA():
         self.calculateInverseMatrix = self.return_InverseMatrixCalculationMethod()
         self.method_name = "FastFCA"
 
+        self.NUM_freq, self.NUM_time, self.NUM_mic = None, None, None
+        self.X_FTM, self.XX_FTMM = None, None
+
+        self.lambda_NFT = None
+        self.diagonalizer_FMM = None
+        self.covarianceDiag_NFM = None
+
+        self.Qx_power_FTM = None
+        self.Y_FTM = None
+
+        self.file_id = None
+        self.fileName_suffix = None
+        self.NUM_iteration = None
+        self.separated_spec = None
+
 
     def convert_to_NumpyArray(self, data):
         if self.xp == np:
