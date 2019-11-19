@@ -105,9 +105,9 @@ class FastFCA():
         self.X_FTM = self.xp.asarray(X_FTM, dtype=C_FP_TYPE)
         self.XX_FTMM =\
             self.X_FTM[:, :, :, None] @ self.X_FTM[:, :, None, :].conj()
-        XX_FTMM = self.xp.einsum(
-            '...i,...j->...ij', self.X_FTM, self.X_FTM.conj())
-        assert self.xp.allclose(self.XX_FTMM, XX_FTMM)
+        # XX_FTMM = self.xp.einsum(
+        #     '...i,...j->...ij', self.X_FTM, self.X_FTM.conj())
+        # assert self.xp.allclose(self.XX_FTMM, XX_FTMM)
 
     def initialize_PSD(self):
         self.lambda_NFT = self.xp.random.random(
@@ -235,18 +235,19 @@ class FastFCA():
 
     def update_Diagonalizer(self):
         # Eq. (18): V_fm = 1/T * sum_t X_ft / \tilde{y}_ftm
-        V_FMMM = (
-            self.XX_FTMM[:, :, None] / self.Y_FTM[:, :, :, None, None]).mean(
-                axis=1)
+        V_FMMM = self.xp.mean(
+            self.XX_FTMM[:, :, None] / (self.Y_FTM[:, :, :, None, None] + EPS),
+            axis=1)
         for m in range(self.NUM_mic):
             # Eq. (19): q_fm <- (Q_f V_fm)^{-1} e_m
-            tmp_FM = self.calculateInverseMatrix(
+            q_FM = self.calculateInverseMatrix(
                 self.diagonalizer_FMM @ V_FMMM[:, m])[:, :, m]
             # Eq. (20): q_fm <- q_fm / sqrt(q_fm^H V_fm q_fm)
-            tmp_FM /= self.xp.sqrt(self.xp.sum(
-                tmp_FM.conj()[:, :, None] * V_FMMM[:, m] * tmp_FM[:, None, :],
-                axis=(-2, -1)))[:, None]
-            self.diagonalizer_FMM[:, m] = tmp_FM.conj()
+            tmp_F = self.xp.sqrt(self.xp.sum(
+                q_FM.conj()[:, :, None] * V_FMMM[:, m] * q_FM[:, None, :],
+                axis=(-2, -1)))
+            q_FM /= tmp_F[:, None] + EPS
+            self.diagonalizer_FMM[:, m] = q_FM.conj()
 
     def update_CovarianceDiagElement(self):
         a_1 = (self.lambda_NFT[..., None] * (
