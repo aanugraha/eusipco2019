@@ -231,6 +231,7 @@ class FastFCA():
         self.update_lambda()
         self.update_CovarianceDiagElement()
         self.update_Diagonalizer()
+        # self.update_Diagonalizer2()
         self.normalize()
 
     def update_Diagonalizer(self):
@@ -248,6 +249,25 @@ class FastFCA():
                 axis=(-2, -1)))
             q_FM /= tmp_F[:, None] + EPS
             self.diagonalizer_FMM[:, m] = q_FM.conj()
+
+    def update_Diagonalizer2(self):
+        # Eq. (18): V_fm = 1/T * sum_t X_ft / \tilde{y}_ftm
+        V_FMMM = self.xp.mean(
+            self.XX_FTMM[:, :, None] / (self.Y_FTM[:, :, :, None, None] + EPS),
+            axis=1)
+        # (batched) Eq. (19): q_fm <- (Q_f V_fm)^{-1} e_m
+        tmp_FMMM = self.calculateInverseMatrix(self.xp.einsum(
+            'ikl,ijlm->ijkm', self.diagonalizer_FMM, V_FMMM))
+        tmp_idxs = self.xp.arange(self.NUM_mic)
+        tmp_diagonalizer_FMM = self.xp.transpose(
+            tmp_FMMM[:, tmp_idxs, :, tmp_idxs], (1, 0, 2))
+        # (batched) Eq. (20): q_fm <- q_fm / sqrt(q_fm^H V_fm q_fm)
+        tmp_FM = self.xp.sqrt(self.xp.sum(
+            tmp_diagonalizer_FMM.conj()[:, :, :, None] * V_FMMM *
+            tmp_diagonalizer_FMM[:, :, None, :],
+            axis=(-2, -1)))
+        tmp_diagonalizer_FMM /= tmp_FM[:, :, None] + EPS
+        self.diagonalizer_FMM = tmp_diagonalizer_FMM.conj()
 
     def update_CovarianceDiagElement(self):
         a_1 = (self.lambda_NFT[..., None] * (
