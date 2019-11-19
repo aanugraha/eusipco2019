@@ -113,6 +113,7 @@ class FastFCA():
         self.lambda_NFT = self.xp.random.random(
             [self.NUM_source, self.NUM_freq, self.NUM_time]).astype(F_FP_TYPE)
         self.lambda_NFT[0] = self.xp.abs(self.X_FTM.mean(axis=2)) ** 2
+        self.lambda_NFT = self.xp.maximum(self.lambda_NFT, EPS)
 
     def initialize_covarianceMatrix(self):
         if "unit" in self.MODE_initialize_covarianceMatrix:
@@ -230,8 +231,8 @@ class FastFCA():
     def update(self):
         self.update_lambda()
         self.update_CovarianceDiagElement()
-        self.update_Diagonalizer()
-        # self.update_Diagonalizer2()
+        # self.update_Diagonalizer()
+        self.update_Diagonalizer2()
         self.normalize()
 
     def update_Diagonalizer(self):
@@ -281,14 +282,16 @@ class FastFCA():
             self.covarianceDiag_NFM[:, :, None]).sum(axis=0)
 
     def update_lambda(self):
-        a = (self.covarianceDiag_NFM[:, :, None] * (
-            self.Qx_power_FTM / (self.Y_FTM ** 2))[None]).sum(axis=3)  # NFT
-        b = (
-            self.covarianceDiag_NFM[:, :, None] / self.Y_FTM[None]).sum(axis=3)
-        self.lambda_NFT = self.lambda_NFT * self.xp.sqrt(a / b) + EPS
-        self.Y_FTM = (
+        a_NFT = self.xp.sum(
+            self.covarianceDiag_NFM[:, :, None] * self.Qx_power_FTM[None] /
+            self.Y_FTM[None]**2, axis=-1)
+        b_NFT = self.xp.sum(
+            self.covarianceDiag_NFM[:, :, None] / self.Y_FTM[None], axis=-1)
+        self.lambda_NFT *= self.xp.sqrt(a_NFT / (b_NFT + EPS))
+        self.lambda_NFT = self.xp.maximum(self.lambda_NFT, EPS)
+        self.Y_FTM = self.xp.sum(
             self.lambda_NFT[..., None] *
-            self.covarianceDiag_NFM[:, :, None]).sum(axis=0)
+            self.covarianceDiag_NFM[:, :, None], axis=0)
 
     def normalize(self):
         phi_F = self.xp.sum(
@@ -300,7 +303,7 @@ class FastFCA():
         mu_NF = self.xp.sum(self.covarianceDiag_NFM, axis=2).real
         self.covarianceDiag_NFM /= mu_NF[:, :, None]
         self.lambda_NFT *= mu_NF[:, :, None]
-        self.lambda_NFT += EPS
+        self.lambda_NFT = self.xp.maximum(self.lambda_NFT, EPS)
 
         self.reset_variable()
 
